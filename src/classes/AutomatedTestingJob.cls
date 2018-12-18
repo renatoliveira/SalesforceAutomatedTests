@@ -26,6 +26,7 @@ global with sharing class AutomatedTestingJob implements Schedulable {
                 Name,
                 AsyncId__c
             FROM AutomatedTestingQueue__c
+            WHERE Completed__c = FALSE
             LIMIT 5
         ];
 
@@ -68,27 +69,64 @@ global with sharing class AutomatedTestingJob implements Schedulable {
                     }
                 }
 
-                List<AutomatedTestingQueue__c> queuedTestsToDelete = new List<AutomatedTestingQueue__c>();
+                List<AutomatedTestingQueue__c> queuedTestsToUpdate = new List<AutomatedTestingQueue__c>();
 
                 for (List<ApexTestResult> jobTestResults : groupedTestResultsByJob.values()) {
-                    // sendTestResultEmail(jobTestResults);
                     sendTestResultSlack(jobTestResults);
                 }
 
                 for (AutomatedTestingQueue__c queuedTest : queuedTests) {
                     for (Id completedAsyncId : completedAsyncIds) {
                         if (queuedTest.AsyncId__c == completedAsyncId) {
-                            queuedTestsToDelete.add(queuedTest);
+                            queuedTestsToUpdate.add(queuedTest);
                             break;
                         }
                     }
-                    if (!groupedTestsByJob.containsKey(queuedTest.asyncId__c)) {
-                        queuedTestsToDelete.add(queuedTest);
+
+                    if (groupedTestResultsByJob.containsKey(queuedTest.AsyncId__c)) {
+                        AggregatedTestResult agr = getAggregatedTestResult(groupedTestResultsByJob.get(queuedTest.AsyncId__c));
+                        queuedTest.Passing__c = agr.passing;
+                        queuedTest.Failing__c = agr.failing;
+                        queuedTest.Skipped__c = agr.skipped;
+                        queuedTest.Completed__c = true;
+                    }
+
+                    if (!groupedTestsByJob.containsKey(queuedTest.AsyncId__c)) {
+                        queuedTestsToUpdate.add(queuedTest);
                     }
                 }
 
-                delete queuedTestsToDelete;
+                update queuedTestsToUpdate;
             }
+        }
+    }
+
+    private static AggregatedTestResult getAggregatedTestResult (List<ApexTestResult> tests) {
+        Integer passing = 0;
+        Integer failing = 0;
+        Integer skipped = 0;
+
+        for (ApexTestResult t : tests) {
+            if (t.Outcome == 'Pass') {
+                passing += 1;
+            } else if (t.Outcome == 'Skip') {
+                skipped += 1;
+            } else {
+                failing += 1;
+            }
+        }
+        return new AggregatedTestResult(passing, failing, skipped);
+    }
+
+    public class AggregatedTestResult {
+        private Integer passing;
+        private Integer failing;
+        private Integer skipped;
+
+        public AggregatedTestResult (Integer passing, Integer failing, Integer skipped) {
+            this.passing = passing;
+            this.failing = failing;
+            this.skipped = skipped;
         }
     }
 
@@ -125,71 +163,6 @@ global with sharing class AutomatedTestingJob implements Schedulable {
         slackMessage.setMessage(testsJSON.generateJSONPayload(jobTestResults));
         slackMessage.send();
     }
-
-    private static void sendTestResultEmail (List<ApexTestResult> jobTestResults) {
-        Messaging.SingleEmailMessage mail = new Messaging.SingleEmailMessage();
-        String emailAddress = 'renato.luiz@cbcloud.com.br';
-        String[] toAddresses = new String[] { emailAddress };
-
-        mail.setToAddresses(toAddresses);
-
-        String emailSubject = 'Dev Unit Test Results ' + String.valueOf(Date.today());
-
-        mail.setSubject(emailSubject);
-
-        String testResultEmailbody = getTestResultHtmlEmailBody(jobTestResults);
-
-        mail.setHtmlBody(testResultEmailbody);
-
-        Messaging.sendEmail(new Messaging.Email[] { mail });
-    }
-
-    private static String getTestResultHtmlEmailBody (List<ApexTestResult> jobTestResults) {
-        List<ApexTestResult> successTests = new List<ApexTestResult>();
-        List<ApexTestResult> failedTests = new List<ApexTestResult>();
-
-        for (ApexTestResult jobTestResult : jobTestResults) {
-            if (jobTestResult.Outcome == 'Pass') {
-                successTests.add(jobTestResult);
-            } else {
-                failedTests.add(jobTestResult);
-            }
-        }
-
-        Integer numTestsRun = successTests.size() + failedTests.size();
-        Integer numFailures = failedTests.size();
-        Integer successNum = numTestsRun - numFailures;
-
-        if (successNum < 0) {
-            successNum = 0;
-        }
-
-        String testResultBody = '';
-
-        testResultBody += '<body><div><p>Hi!</p><p>Here are the test results you scheduled the ' +
-            'platform to email to you:</p><table><tr><td>Ran</td><td>Passing</td><td>Failing</td>' +
-            ' </tr><tr class="test-summary-body">';
-
-        testResultBody += '<td>' + numTestsRun + '</td>';
-        testResultBody += '<td>' + successNum + '</td>';
-        testResultBody += '<td>' + numFailures + '</td>';
-
-        if (numFailures > 0) {
-            for (ApexTestResult testFailure : failedTests) {
-                testResultBody += '<tr>';
-                testResultBody += '<td><p>' + testFailure.ApexClass.Name +
-                    '</p><p>' + testFailure.MethodName + '</p></td>';
-                testResultBody += '<td>' + testFailure.Message + '</td>';
-                testResultBody += '<td>' + testFailure.StackTrace + '</td>';
-                testResultBody += '<td>' + testFailure.ApexLog.DurationMilliseconds +
-                    '</td></tr>';
-            }
-            testResultBody += '</tbody></table>';
-        }
-        testResultBody += '</div></body>';
-        return testResultBody;
-    }
-
 
     /**
      * Get the status and pass rate for each class
