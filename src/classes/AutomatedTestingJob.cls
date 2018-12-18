@@ -7,7 +7,15 @@ global with sharing class AutomatedTestingJob implements Schedulable {
     // Have to use a future method so the email will be sent out.
     @Future(Callout=true)
     public static void doExecute () {
-        processAsyncResults();
+        processAsyncResults(true, [
+            SELECT
+                Id,
+                Name,
+                AsyncId__c
+            FROM AutomatedTestingQueue__c
+            WHERE Completed__c = FALSE
+            LIMIT 5
+        ]);
     }
 
     /**
@@ -19,17 +27,7 @@ global with sharing class AutomatedTestingJob implements Schedulable {
         system.schedule('Process Queued Unit Tests Every Hour',sch,atj);
     }
 
-    public static void processAsyncResults () {
-        List<AutomatedTestingQueue__c> queuedTests = [
-            SELECT
-                Id,
-                Name,
-                AsyncId__c
-            FROM AutomatedTestingQueue__c
-            WHERE Completed__c = FALSE
-            LIMIT 5
-        ];
-
+    public static void processAsyncResults (Boolean sendResults, List<AutomatedTestingQueue__c> queuedTests) {
         if (queuedTests != null && queuedTests.size() > 0) {
             Set<Id> asyncIds = new Set<Id>();
 
@@ -72,7 +70,9 @@ global with sharing class AutomatedTestingJob implements Schedulable {
                 List<AutomatedTestingQueue__c> queuedTestsToUpdate = new List<AutomatedTestingQueue__c>();
 
                 for (List<ApexTestResult> jobTestResults : groupedTestResultsByJob.values()) {
-                    sendTestResultSlack(jobTestResults);
+                    if (sendResults) {
+                        sendTestResultSlack(jobTestResults);
+                    }
                 }
 
                 for (AutomatedTestingQueue__c queuedTest : queuedTests) {
@@ -159,7 +159,7 @@ global with sharing class AutomatedTestingJob implements Schedulable {
     private static void sendTestResultSlack (List<ApexTestResult> jobTestResults) {
         SlackFailingTestsMessage testsJSON = new SlackFailingTestsMessage();
         SlackWebhookMessage slackMessage = new SlackWebhookMessage();
-        slackMessage.setEndpoint('https://hooks.slack.com/services/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');
+        slackMessage.setEndpoint('your slack hook here');
         slackMessage.setMessage(testsJSON.generateJSONPayload(jobTestResults));
         slackMessage.send();
     }
