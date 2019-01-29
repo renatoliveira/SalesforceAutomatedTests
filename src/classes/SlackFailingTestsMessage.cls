@@ -36,16 +36,25 @@ public with sharing class SlackFailingTestsMessage {
         }
 
         Attachments messageBody = new Attachments();
-        messageBody.fallback = String.format('{0} tests ran, {1} passing, {2} failed.', new List<String>{
+        Organization orgInfo = [SELECT Name, InstanceName FROM Organization LIMIT 1];
+        Decimal passingPercentage = passingTestsCount * 100.0/totaltestsCount;
+        messageBody.fallback = String.format('{0} tests ran, {1} passing ({3}), {2} failed on {4} ({5}).', new List<String>{
             totaltestsCount+''
             ,passingTestsCount+''
             ,failedTestsCount+''
+            ,passingPercentage.setScale(2)+'%'
+            ,orgInfo.Name
+            ,orgInfo.InstanceName
         });
         messageBody.pretext = messageBody.fallback;
         messageBody.color = fields.size() > 0 ? '#f44336' : '#4caf50';
+        String passingText = String.format('All tests passing on {0} ({1})! ✅', new List<String>{
+            orgInfo.Name,
+            orgInfo.InstanceName
+        });
         if (fields.size() == 0) {
-            messageBody.fallback = 'All tests passing! ✅ 🥳';
-            messageBody.pretext = 'All tests passing! ✅ 🥳';
+            messageBody.fallback = passingText;
+            messageBody.pretext = passingText;
         }
         messageBody.fields = fields;
         messageBody.footer = 'via Salesforce and Slack API';
